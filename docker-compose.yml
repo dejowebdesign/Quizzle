@@ -1,6 +1,6 @@
 services:
   quizzle:
-    image: germannewsmaker/quizzle:latest
+    image: ghcr.io/dejowebdesign/quizzle:latest
     ports:
       - "6412:6412"
     volumes:
