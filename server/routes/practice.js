@@ -8,6 +8,7 @@ const app = require('express').Router();
 const {requireAuth} = require("../middleware/auth");
 const {compressQuiz, resolveQuestionType, shuffleSequenceAnswers, stripAnswerCorrectness} = require("../utils/quiz");
 const {evaluateTextAnswer, evaluateSequenceAnswer, evaluateChoiceAnswer, evaluateSliderAnswer} = require("../utils/scoring");
+const {canManage} = require("../utils/ownership");
 const {
     normalizePracticeCode,
     isSafePracticeCode,
@@ -65,7 +66,9 @@ app.put("/", createLimiter, requireAuth, async (req, res) => {
 
         const meta = {
             created: new Date().toISOString(),
-            expiry: expiry ? new Date(expiry).toISOString() : null
+            expiry: expiry ? new Date(expiry).toISOString() : null,
+            owner: req.user?.id || null,
+            ownerName: req.user?.username || null
         };
 
         await writePracticeMeta(practiceCode, meta);
@@ -373,6 +376,10 @@ app.post('/:code/results', requireAuth, async (req, res) => {
         }
 
         const meta = await readPracticeMeta(code) || {};
+
+        if (!canManage(meta.owner, req.user)) {
+            return res.status(403).json({message: "Keine Berechtigung für diese Ergebnisse."});
+        }
 
         const results = await readPracticeResults(code);
 

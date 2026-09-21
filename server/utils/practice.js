@@ -147,6 +147,8 @@ const listPracticeQuizzes = async () => {
             effectiveExpiry: effectiveExpiry ? effectiveExpiry.toISOString() : null,
             expired: isPracticeExpired(meta),
             resultCount: await getResultCount(dir),
+            owner: meta.owner || null,
+            ownerName: meta.ownerName || null,
         });
     }
 

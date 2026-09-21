@@ -34,7 +34,7 @@ const toDateTimeLocalValue = (date) => {
 const EDIT_STORAGE_KEY = 'qq_edit_quiz';
 
 export const Manage = () => {
-    const {user, isAdmin, logout} = useContext(AuthContext);
+    const {user, isAdmin, isAuthenticated, authLoading, logout} = useContext(AuthContext);
     const {titleImg} = useContext(BrandingContext);
     const {loadQuizById} = useContext(QuizContext);
     const navigate = useNavigate();
@@ -68,13 +68,14 @@ export const Manage = () => {
     }, []);
 
     useEffect(() => {
-        if (loading) return;
-        if (!isAdmin) navigate('/');
-    }, [isAdmin, loading, navigate]);
+        if (authLoading) return;
+        if (!isAuthenticated) navigate('/');
+    }, [authLoading, isAuthenticated, navigate]);
 
     useEffect(() => {
+        if (authLoading || !isAuthenticated) return;
         loadAll();
-    }, [loadAll]);
+    }, [authLoading, isAuthenticated, loadAll]);
 
     const formatDate = (value) => {
         if (!value) return '–';
@@ -191,9 +192,12 @@ export const Manage = () => {
 
     const expiredCount = useMemo(() => practiceQuizzes.filter(item => item.expired).length, [practiceQuizzes]);
 
-    if (loading) return null;
+    if (authLoading || loading) return null;
 
-    if (!isAdmin) return null;
+    if (!isAuthenticated) return null;
+
+    const quizTabLabel = isAdmin ? 'Alle Quizze' : 'Meine Quizze';
+    const practiceTabLabel = isAdmin ? 'Alle Tests' : 'Meine Tests';
 
     return (
         <div className="manage-page">
@@ -219,7 +223,7 @@ export const Manage = () => {
                         onClick={() => setActiveTab('quizzes')}
                     >
                         <FontAwesomeIcon icon={faSwatchbook}/>
-                        Meine Quizze
+                        {quizTabLabel}
                         <span className="tab-count">{quizzes.length}</span>
                     </button>
                     <button
@@ -227,7 +231,7 @@ export const Manage = () => {
                         onClick={() => setActiveTab('practice')}
                     >
                         <FontAwesomeIcon icon={faGraduationCap}/>
-                        Meine Tests
+                        {practiceTabLabel}
                         <span className="tab-count">{practiceQuizzes.length}</span>
                         {expiredCount > 0 && <span className="tab-badge">{expiredCount} abgelaufen</span>}
                     </button>
@@ -238,23 +242,29 @@ export const Manage = () => {
                         {quizzes.length === 0 ? (
                             <div className="empty-state">
                                 <FontAwesomeIcon icon={faSwatchbook}/>
-                                <p>Noch keine Quizze gespeichert.</p>
+                                <p>{isAdmin ? 'Noch keine Quizze gespeichert.' : 'Du hast noch keine Quizze gespeichert.'}</p>
                             </div>
                         ) : (
-                            <div className="manage-table">
-                                <div className="table-head quiz-grid">
+                            <div className={`manage-table ${isAdmin ? 'with-owner' : ''}`}>
+                                <div className={`table-head quiz-grid ${isAdmin ? 'with-owner' : ''}`}>
                                     <span>Titel</span>
                                     <span>Quiz-ID</span>
                                     <span>Fragen</span>
                                     <span>Erstellt</span>
+                                    {isAdmin && <span>Besitzer</span>}
                                     <span>Aktionen</span>
                                 </div>
                                 {quizzes.map(quiz => (
-                                    <div key={quiz.quizId} className="table-row quiz-grid">
+                                    <div key={quiz.quizId} className={`table-row quiz-grid ${isAdmin ? 'with-owner' : ''}`}>
                                         <span className="cell-title">{quiz.title}</span>
                                         <span className="cell-code">{quiz.quizId}</span>
                                         <span>{quiz.questionCount}</span>
                                         <span className="cell-muted">{formatDate(quiz.created)}</span>
+                                        {isAdmin && (
+                                            <span className="cell-owner">
+                                                {quiz.ownerName || <span className="cell-muted">–</span>}
+                                            </span>
+                                        )}
                                         <span className="cell-actions">
                                             <button className="icon-btn" title="Quiz starten"
                                                     onClick={() => startQuiz(quiz.quizId)}>
@@ -281,21 +291,22 @@ export const Manage = () => {
                         {practiceQuizzes.length === 0 ? (
                             <div className="empty-state">
                                 <FontAwesomeIcon icon={faGraduationCap}/>
-                                <p>Noch keine Tests erstellt.</p>
+                                <p>{isAdmin ? 'Noch keine Tests erstellt.' : 'Du hast noch keine Tests erstellt.'}</p>
                             </div>
                         ) : (
-                            <div className="manage-table">
-                                <div className="table-head practice-grid">
+                            <div className={`manage-table ${isAdmin ? 'with-owner' : ''}`}>
+                                <div className={`table-head practice-grid ${isAdmin ? 'with-owner' : ''}`}>
                                     <span>Titel</span>
                                     <span>Code</span>
                                     <span>Ablauf</span>
                                     <span>Status</span>
                                     <span>Ergebnisse</span>
+                                    {isAdmin && <span>Besitzer</span>}
                                     <span>Aktionen</span>
                                 </div>
                                 {practiceQuizzes.map(entry => (
                                     <div key={entry.code}
-                                         className={`table-row practice-grid ${entry.expired ? 'expired' : ''}`}>
+                                         className={`table-row practice-grid ${isAdmin ? 'with-owner' : ''} ${entry.expired ? 'expired' : ''}`}>
                                         <span className="cell-title">
                                             {entry.title}
                                             <span className="cell-sub">{entry.questionCount} Fragen · erstellt {formatDate(entry.created)}</span>
@@ -325,6 +336,11 @@ export const Manage = () => {
                                             )}
                                         </span>
                                         <span className="cell-results">{entry.resultCount}</span>
+                                        {isAdmin && (
+                                            <span className="cell-owner">
+                                                {entry.ownerName || <span className="cell-muted">–</span>}
+                                            </span>
+                                        )}
                                         <span className="cell-actions">
                                             <button className="icon-btn" title="Ergebnisse anzeigen"
                                                     onClick={() => openResults(entry.code)}>

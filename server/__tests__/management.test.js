@@ -77,11 +77,13 @@ const sampleQuiz = (title = 'Test Quiz') => ({
     ],
 });
 
-const writePracticeFixture = (code, {meta, quiz = sampleQuiz('Fixture'), results = []}) => {
+const writePracticeFixture = (code, {meta, quiz = sampleQuiz('Fixture'), results = [], owner, ownerName}) => {
     const dir = path.join(dataDir, 'practice-quizzes', code);
     fs.mkdirSync(path.join(dir, 'results'), {recursive: true});
     fs.writeFileSync(path.join(dir, 'quiz.quizzle'), compressQuiz({__type: 'QUIZZLE2', ...quiz}));
-    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(meta, null, 2));
+
+    const fullMeta = owner === undefined ? meta : {...meta, owner, ownerName};
+    fs.writeFileSync(path.join(dir, 'meta.json'), JSON.stringify(fullMeta, null, 2));
 
     results.forEach((result, index) => {
         fs.writeFileSync(path.join(dir, 'results', `attempt-${index}.json`), JSON.stringify(result, null, 2));
@@ -99,15 +101,48 @@ const sampleResult = (name) => ({
     timestamp: new Date().toISOString(),
 });
 
+const writeQuizFixture = (quizId, {quiz = sampleQuiz('Fixture'), owner, ownerName} = {}) => {
+    fs.mkdirSync(path.join(dataDir, 'quizzes'), {recursive: true});
+    fs.writeFileSync(path.join(dataDir, 'quizzes', `${quizId}.quizzle`), compressQuiz({__type: 'QUIZZLE2', ...quiz}));
+
+    if (owner !== undefined) {
+        fs.writeFileSync(path.join(dataDir, 'quizzes', `${quizId}.meta.json`), JSON.stringify({
+            owner: owner || null,
+            ownerName: ownerName || null,
+            created: new Date().toISOString()
+        }, null, 2));
+    }
+
+    return quizId;
+};
+
 createUser('root', 'supersecret', 'admin');
 createUser('teacher', 'supersecret', 'teacher');
+createUser('teacher2', 'supersecret', 'teacher');
+
+const userIdByName = (name) => JSON.parse(fs.readFileSync(path.join(dataDir, 'users.json'), 'utf8'))
+    .users.find(u => u.username === name).id;
+
+const teacherId = userIdByName('teacher');
+const teacher2Id = userIdByName('teacher2');
 
 let adminCookie;
 let teacherCookie;
+let teacher2Cookie;
+let teacherPracticeCode;
 
 test.before(async () => {
     adminCookie = await loginAs('root', 'supersecret');
     teacherCookie = await loginAs('teacher', 'supersecret');
+    teacher2Cookie = await loginAs('teacher2', 'supersecret');
+
+    // Created once through the API so the remaining ownership tests stay below the create rate limit.
+    const created = await request('PUT', '/api/practice', {
+        cookie: teacherCookie,
+        body: {...sampleQuiz('Lehrer Test'), expiry: null},
+    });
+    assert.strictEqual(created.status, 200, created.text);
+    teacherPracticeCode = created.body.practiceCode;
 });
 
 const daysFromNow = (days) => new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString();
@@ -294,7 +329,7 @@ test('Test inklusive Ergebnisse kann manuell gelöscht werden', async () => {
     assert.strictEqual(again.status, 404);
 });
 
-test('Verwaltungsendpunkte erfordern Admin-Authentifizierung', async () => {
+test('Verwaltungsendpunkte erfordern eine Anmeldung', async () => {
     const endpoints = [
         ['GET', '/api/admin/quizzes'],
         ['GET', '/api/admin/practice'],
@@ -306,9 +341,6 @@ test('Verwaltungsendpunkte erfordern Admin-Authentifizierung', async () => {
     for (const [method, url] of endpoints) {
         const anonymous = await request(method, url, {body: method === 'PUT' ? {expiry: null} : undefined});
         assert.strictEqual(anonymous.status, 401, `${method} ${url} muss ohne Anmeldung 401 liefern`);
-
-        const asTeacher = await request(method, url, {cookie: teacherCookie, body: method === 'PUT' ? {expiry: null} : undefined});
-        assert.strictEqual(asTeacher.status, 403, `${method} ${url} muss für Lehrkräfte 403 liefern`);
     }
 });
 
@@ -365,4 +397,142 @@ test('Practice-Code-Format wird weiterhin validiert', async () => {
 
     const missing = await request('GET', '/api/practice/ZZZZ/exists');
     assert.strictEqual(missing.status, 404);
+});
+
+test('Lehrer sieht eigene Quizze, andere Lehrkräfte sehen sie nicht', async () => {
+    const upload = await request('PUT', '/api/quizzes', {cookie: teacherCookie, body: sampleQuiz('Lehrer Quiz')});
+    assert.strictEqual(upload.status, 200, upload.text);
+
+    const own = await request('GET', '/api/admin/quizzes', {cookie: teacherCookie});
+    assert.strictEqual(own.status, 200, own.text);
+    assert.ok(own.body.quizzes.find(quiz => quiz.quizId === upload.body.quizId), 'eigenes Quiz muss sichtbar sein');
+    assert.ok(!own.body.quizzes.some(quiz => !quiz.owner), 'Lehrer darf Legacy-Quizze ohne Owner nicht sehen');
+
+    const other = await request('GET', '/api/admin/quizzes', {cookie: teacher2Cookie});
+    assert.ok(!other.body.quizzes.some(quiz => quiz.quizId === upload.body.quizId), 'fremdes Quiz darf nicht sichtbar sein');
+
+    const admin = await request('GET', '/api/admin/quizzes', {cookie: adminCookie});
+    assert.ok(admin.body.quizzes.some(quiz => quiz.quizId === upload.body.quizId), 'Admin sieht alle Quizze');
+});
+
+test('Lehrer sieht eigene Tests, andere Lehrkräfte sehen sie nicht', async () => {
+    const own = await request('GET', '/api/admin/practice', {cookie: teacherCookie});
+    assert.ok(own.body.practiceQuizzes.some(item => item.code === teacherPracticeCode), 'eigener Test muss sichtbar sein');
+
+    const other = await request('GET', '/api/admin/practice', {cookie: teacher2Cookie});
+    assert.ok(!other.body.practiceQuizzes.some(item => item.code === teacherPracticeCode), 'fremder Test darf nicht sichtbar sein');
+    assert.ok(!other.body.practiceQuizzes.some(item => !item.owner), 'Lehrer darf Legacy-Tests ohne Owner nicht sehen');
+
+    const admin = await request('GET', '/api/admin/practice', {cookie: adminCookie});
+    assert.ok(admin.body.practiceQuizzes.some(item => item.code === teacherPracticeCode), 'Admin sieht alle Tests');
+
+    const meta = JSON.parse(fs.readFileSync(path.join(dataDir, 'practice-quizzes', teacherPracticeCode, 'meta.json'), 'utf8'));
+    assert.strictEqual(meta.owner, teacherId, 'User-ID aus req.user.id muss als Owner gespeichert sein');
+    assert.strictEqual(meta.ownerName, 'teacher');
+});
+
+test('Lehrer kann eigene Ergebnisse sehen, fremde nicht', async () => {
+    writePracticeFixture('OWNS', {
+        meta: {created: daysFromNow(-1), expiry: null},
+        owner: teacherId,
+        ownerName: 'teacher',
+        results: [sampleResult('Dora')],
+    });
+
+    const own = await request('POST', '/api/practice/OWNS/results', {cookie: teacherCookie, body: {}});
+    assert.strictEqual(own.status, 200, own.text);
+    assert.strictEqual(own.body.results[0].name, 'Dora');
+
+    const other = await request('POST', '/api/practice/OWNS/results', {cookie: teacher2Cookie, body: {}});
+    assert.strictEqual(other.status, 403, other.text);
+
+    const admin = await request('POST', '/api/practice/OWNS/results', {cookie: adminCookie, body: {}});
+    assert.strictEqual(admin.status, 200, admin.text);
+    assert.strictEqual(admin.body.results[0].name, 'Dora');
+});
+
+test('Lehrer kann fremdes Quiz oder fremden Test nicht löschen', async () => {
+    writeQuizFixture('TQUIZ1', {quiz: sampleQuiz('Fremdes Quiz'), owner: teacherId, ownerName: 'teacher'});
+    writePracticeFixture('TSTA', {meta: {created: daysFromNow(-1), expiry: null}, owner: teacherId, ownerName: 'teacher'});
+
+    const foreignQuizDelete = await request('DELETE', '/api/admin/quizzes/TQUIZ1', {cookie: teacher2Cookie});
+    assert.strictEqual(foreignQuizDelete.status, 404, foreignQuizDelete.text);
+    assert.ok(fs.existsSync(path.join(dataDir, 'quizzes', 'TQUIZ1.quizzle')), 'fremdes Quiz darf nicht gelöscht werden');
+
+    const foreignPracticeDelete = await request('DELETE', '/api/admin/practice/TSTA', {cookie: teacher2Cookie});
+    assert.strictEqual(foreignPracticeDelete.status, 404, foreignPracticeDelete.text);
+    assert.ok(fs.existsSync(path.join(dataDir, 'practice-quizzes', 'TSTA')), 'fremder Test darf nicht gelöscht werden');
+
+    const ownQuizDelete = await request('DELETE', '/api/admin/quizzes/TQUIZ1', {cookie: teacherCookie});
+    assert.strictEqual(ownQuizDelete.status, 200, ownQuizDelete.text);
+
+    const ownPracticeDelete = await request('DELETE', '/api/admin/practice/TSTA', {cookie: teacherCookie});
+    assert.strictEqual(ownPracticeDelete.status, 200, ownPracticeDelete.text);
+});
+
+test('Lehrer kann fremdes Ablaufdatum nicht ändern', async () => {
+    writePracticeFixture('TSTB', {meta: {created: daysFromNow(-1), expiry: null}, owner: teacherId, ownerName: 'teacher'});
+
+    const foreign = await request('PUT', '/api/admin/practice/TSTB/expiry', {
+        cookie: teacher2Cookie,
+        body: {expiry: daysFromNow(7)},
+    });
+    assert.strictEqual(foreign.status, 404, foreign.text);
+
+    const own = await request('PUT', '/api/admin/practice/TSTB/expiry', {
+        cookie: teacherCookie,
+        body: {expiry: daysFromNow(7)},
+    });
+    assert.strictEqual(own.status, 200, own.text);
+    assert.strictEqual(own.body.expired, false);
+});
+
+test('Lehrer kann fremdes Quiz nicht bearbeiten oder abrufen', async () => {
+    writeQuizFixture('TQUIZ2', {quiz: sampleQuiz('Privat'), owner: teacher2Id, ownerName: 'teacher2'});
+
+    const read = await request('GET', '/api/admin/quizzes/TQUIZ2', {cookie: teacherCookie});
+    assert.strictEqual(read.status, 404, read.text);
+
+    const ownRead = await request('GET', '/api/admin/quizzes/TQUIZ2', {cookie: teacher2Cookie});
+    assert.strictEqual(ownRead.status, 200, ownRead.text);
+    assert.strictEqual(ownRead.body.title, 'Privat');
+});
+
+test('Legacy-Daten ohne Owner bleiben nur für Admins sichtbar und verwaltbar', async () => {
+    // Simulates files created before ownership existed: no meta.json / no owner field.
+    writeQuizFixture('LEGACY1', {quiz: sampleQuiz('Legacy Quiz')});
+    writePracticeFixture('LGOW', {meta: {created: daysFromNow(-1), expiry: null}, results: [sampleResult('Eva')]});
+
+    const teacherQuizzes = await request('GET', '/api/admin/quizzes', {cookie: teacherCookie});
+    assert.ok(!teacherQuizzes.body.quizzes.some(quiz => quiz.quizId === 'LEGACY1'), 'Lehrer darf Legacy-Quiz nicht sehen');
+
+    const teacherPractice = await request('GET', '/api/admin/practice', {cookie: teacherCookie});
+    assert.ok(!teacherPractice.body.practiceQuizzes.some(item => item.code === 'LGOW'), 'Lehrer darf Legacy-Test nicht sehen');
+
+    const legacyResultsAsTeacher = await request('POST', '/api/practice/LGOW/results', {cookie: teacherCookie, body: {}});
+    assert.strictEqual(legacyResultsAsTeacher.status, 403, legacyResultsAsTeacher.text);
+
+    const adminQuizzes = await request('GET', '/api/admin/quizzes', {cookie: adminCookie});
+    assert.ok(adminQuizzes.body.quizzes.some(quiz => quiz.quizId === 'LEGACY1'), 'Admin sieht Legacy-Quiz');
+
+    const adminPractice = await request('GET', '/api/admin/practice', {cookie: adminCookie});
+    const legacyEntry = adminPractice.body.practiceQuizzes.find(item => item.code === 'LGOW');
+    assert.ok(legacyEntry, 'Admin sieht Legacy-Test');
+    assert.strictEqual(legacyEntry.owner, null);
+
+    const adminResults = await request('POST', '/api/practice/LGOW/results', {cookie: adminCookie, body: {}});
+    assert.strictEqual(adminResults.status, 200, adminResults.text);
+    assert.strictEqual(adminResults.body.results[0].name, 'Eva');
+
+    const adminDelete = await request('DELETE', '/api/admin/practice/LGOW', {cookie: adminCookie});
+    assert.strictEqual(adminDelete.status, 200, adminDelete.text);
+});
+
+test('Öffentliches Quiz-ID-Loading zeigt keine Besitzerdaten preis', async () => {
+    const upload = await request('PUT', '/api/quizzes', {cookie: teacherCookie, body: sampleQuiz('Offen')});
+    const raw = await fetch(`${baseUrl}/api/quizzes/${upload.body.quizId}`);
+    assert.strictEqual(raw.status, 200);
+
+    const quiz = decompressQuiz(Buffer.from(await raw.arrayBuffer()));
+    assert.strictEqual(quiz.owner, undefined, 'Owner darf nicht Teil der öffentlichen Quizdatei sein');
 });

@@ -8,7 +8,7 @@ const {quizzesFolder} = require("../utils/file");
 const {generateQuizId} = require("../utils/random");
 const {requireAuth} = require("../middleware/auth");
 const {compressQuiz} = require("../utils/quiz");
-const {resolveQuizPath} = require("../utils/savedQuizzes");
+const {resolveQuizPath, writeSavedQuizMeta} = require("../utils/savedQuizzes");
 
 const uploadFile = async (content) => {
     let random = generateQuizId();
@@ -63,6 +63,15 @@ app.put("/", limiter, requireAuth, async (req, res) => {
     if (validateSchema(res, quizUpload, req.body)) return;
 
     const quizId = await uploadFile(req.body);
+
+    if (req.user?.id) {
+        await writeSavedQuizMeta(quizId, {
+            owner: req.user.id,
+            ownerName: req.user.username,
+            created: new Date().toISOString()
+        });
+    }
+
     res.json({quizId});
 });
 

@@ -1,8 +1,9 @@
 const app = require('express').Router();
-const {requireAdmin} = require('../middleware/auth');
+const {requireAuth} = require('../middleware/auth');
 const {validateSchema} = require('../utils/error');
 const {practiceExpiryValidation} = require('../validations/quiz');
-const {listSavedQuizzes, readSavedQuiz, deleteSavedQuiz, isSafeQuizId} = require('../utils/savedQuizzes');
+const {listSavedQuizzes, readSavedQuiz, readSavedQuizMeta, deleteSavedQuiz, isSafeQuizId} = require('../utils/savedQuizzes');
+const {isAdminUser, isOwner, isVisibleTo} = require('../utils/ownership');
 const {
     listPracticeQuizzes,
     readPracticeMeta,
@@ -14,24 +15,44 @@ const {
     isPracticeExpired,
 } = require('../utils/practice');
 
-const findPracticeQuiz = (code) => isSafePracticeCode(code);
+/**
+ * Teachers only ever see their own quizzes and tests. Legacy entries without an owner
+ * stay available to admins but are deliberately not attributed to any teacher.
+ */
+const scopeEntries = (entries, user) => {
+    if (isAdminUser(user)) return entries;
+    return entries.filter(entry => isOwner(entry.owner, user));
+};
 
-app.get('/quizzes', requireAdmin, async (req, res) => {
+/**
+ * Non-owned resources are reported as missing so that their existence is not disclosed.
+ */
+const requireVisible = (ownerId, user, res) => {
+    if (isVisibleTo(ownerId, user)) return true;
+    res.status(404).json({message: 'Nicht gefunden.'});
+    return false;
+};
+
+app.get('/quizzes', requireAuth, async (req, res) => {
     try {
-        res.json({quizzes: await listSavedQuizzes()});
+        const quizzes = scopeEntries(await listSavedQuizzes(), req.user);
+        res.json({quizzes});
     } catch (error) {
         console.error('Error listing quizzes:', error);
         res.status(500).json({message: 'Quizze konnten nicht geladen werden.'});
     }
 });
 
-app.get('/quizzes/:quizId', requireAdmin, async (req, res) => {
+app.get('/quizzes/:quizId', requireAuth, async (req, res) => {
     try {
         const {quizId} = req.params;
 
         if (!isSafeQuizId(quizId)) {
             return res.status(400).json({message: 'Ungültige Quiz-ID.'});
         }
+
+        const meta = await readSavedQuizMeta(quizId) || {};
+        if (!requireVisible(meta.owner, req.user, res)) return;
 
         const quiz = await readSavedQuiz(quizId);
         if (!quiz) {
@@ -51,13 +72,16 @@ app.get('/quizzes/:quizId', requireAdmin, async (req, res) => {
     }
 });
 
-app.delete('/quizzes/:quizId', requireAdmin, async (req, res) => {
+app.delete('/quizzes/:quizId', requireAuth, async (req, res) => {
     try {
         const {quizId} = req.params;
 
         if (!isSafeQuizId(quizId)) {
             return res.status(400).json({message: 'Ungültige Quiz-ID.'});
         }
+
+        const meta = await readSavedQuizMeta(quizId) || {};
+        if (!requireVisible(meta.owner, req.user, res)) return;
 
         if (!await deleteSavedQuiz(quizId)) {
             return res.status(404).json({message: 'Quiz nicht gefunden.'});
@@ -70,28 +94,31 @@ app.delete('/quizzes/:quizId', requireAdmin, async (req, res) => {
     }
 });
 
-app.get('/practice', requireAdmin, async (req, res) => {
+app.get('/practice', requireAuth, async (req, res) => {
     try {
-        res.json({practiceQuizzes: await listPracticeQuizzes()});
+        const practiceQuizzes = scopeEntries(await listPracticeQuizzes(), req.user);
+        res.json({practiceQuizzes});
     } catch (error) {
         console.error('Error listing practice quizzes:', error);
         res.status(500).json({message: 'Tests konnten nicht geladen werden.'});
     }
 });
 
-app.get('/practice/:code', requireAdmin, async (req, res) => {
+app.get('/practice/:code', requireAuth, async (req, res) => {
     try {
         const {code} = req.params;
 
-        if (!findPracticeQuiz(code)) {
+        if (!isSafePracticeCode(code)) {
             return res.status(400).json({message: 'Ungültiger Practice-Code.'});
         }
+
+        const meta = await readPracticeMeta(code) || {};
+        if (!requireVisible(meta.owner, req.user, res)) return;
 
         if (!await practiceQuizExists(code)) {
             return res.status(404).json({message: 'Test nicht gefunden.'});
         }
 
-        const meta = await readPracticeMeta(code) || {};
         const expiry = getEffectiveExpiry(meta);
 
         res.json({
@@ -107,14 +134,17 @@ app.get('/practice/:code', requireAdmin, async (req, res) => {
     }
 });
 
-app.put('/practice/:code/expiry', requireAdmin, async (req, res) => {
+app.put('/practice/:code/expiry', requireAuth, async (req, res) => {
     try {
         const {code} = req.params;
         const {expiry} = req.body;
 
-        if (!findPracticeQuiz(code)) {
+        if (!isSafePracticeCode(code)) {
             return res.status(400).json({message: 'Ungültiger Practice-Code.'});
         }
+
+        const existingMeta = await readPracticeMeta(code) || {};
+        if (!requireVisible(existingMeta.owner, req.user, res)) return;
 
         if (validateSchema(res, practiceExpiryValidation, expiry)) return;
 
@@ -122,7 +152,7 @@ app.put('/practice/:code/expiry', requireAdmin, async (req, res) => {
             return res.status(404).json({message: 'Test nicht gefunden.'});
         }
 
-        const meta = await readPracticeMeta(code) || {created: new Date().toISOString()};
+        const meta = {...existingMeta, created: existingMeta.created || new Date().toISOString()};
         meta.expiry = expiry ? new Date(expiry).toISOString() : null;
 
         await writePracticeMeta(code, meta);
@@ -138,13 +168,16 @@ app.put('/practice/:code/expiry', requireAdmin, async (req, res) => {
     }
 });
 
-app.delete('/practice/:code', requireAdmin, async (req, res) => {
+app.delete('/practice/:code', requireAuth, async (req, res) => {
     try {
         const {code} = req.params;
 
-        if (!findPracticeQuiz(code)) {
+        if (!isSafePracticeCode(code)) {
             return res.status(400).json({message: 'Ungültiger Practice-Code.'});
         }
+
+        const meta = await readPracticeMeta(code) || {};
+        if (!requireVisible(meta.owner, req.user, res)) return;
 
         if (!await deletePracticeQuiz(code)) {
             return res.status(404).json({message: 'Test nicht gefunden.'});

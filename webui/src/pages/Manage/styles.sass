@@ -108,11 +108,24 @@
   align-items: center
   gap: 0.75rem
 
+  &.with-owner
+    grid-template-columns: 2fr 0.9fr 0.5fr 1.1fr 1fr 10rem
+
 .practice-grid
   display: grid
   grid-template-columns: 2fr 0.7fr 1.2fr 1fr 0.7fr 11rem
   align-items: center
   gap: 0.75rem
+
+  &.with-owner
+    grid-template-columns: 2fr 0.6fr 1.1fr 0.9fr 0.6fr 1fr 11rem
+
+.cell-owner
+  font-size: 0.85rem
+  color: $text
+  overflow: hidden
+  text-overflow: ellipsis
+  white-space: nowrap
 
 .table-head
   padding: 0.5rem 0.75rem

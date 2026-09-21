@@ -251,21 +251,21 @@ export const Home = () => {
                                 setCirclePosition("-30rem 0 0 -30rem");
                                 setTimeout(() => navigate("/load"), 500);
                             }}/>
+                    {isAuthenticated && (
+                        <Button text="Verwaltung" icon={faFolderOpen} padding={"0.8rem 2.5rem"} type="secondary"
+                                disabled={code !== null}
+                                onClick={() => {
+                                    setCirclePosition("-30rem 0 0 -30rem");
+                                    setTimeout(() => navigate("/manage"), 500);
+                                }}/>
+                    )}
                     {isAdmin && (
-                        <>
-                            <Button text="Verwaltung" icon={faFolderOpen} padding={"0.8rem 2.5rem"} type="secondary"
-                                    disabled={code !== null}
-                                    onClick={() => {
-                                        setCirclePosition("-30rem 0 0 -30rem");
-                                        setTimeout(() => navigate("/manage"), 500);
-                                    }}/>
-                            <Button text="Admin" icon={faGear} padding={"0.8rem 2.5rem"} type="secondary"
-                                    disabled={code !== null}
-                                    onClick={() => {
-                                        setCirclePosition("-30rem 0 0 -30rem");
-                                        setTimeout(() => navigate("/admin"), 500);
-                                    }}/>
-                        </>
+                        <Button text="Admin" icon={faGear} padding={"0.8rem 2.5rem"} type="secondary"
+                                disabled={code !== null}
+                                onClick={() => {
+                                    setCirclePosition("-30rem 0 0 -30rem");
+                                    setTimeout(() => navigate("/admin"), 500);
+                                }}/>
                     )}
                     {!isAuthenticated && (
                         <Button text="Anmelden" icon={faRightToBracket} padding={"0.8rem 2.5rem"} type="secondary"
