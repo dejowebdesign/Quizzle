@@ -1,4 +1,4 @@
-const { resolveQuestionType } = require('./quiz');
+const { resolveQuestionType, stripAnswerCorrectness } = require('./quiz');
 
 const getActivePlayers = (room, io) => {
     const activePlayers = {};
@@ -28,8 +28,13 @@ const buildQuestionPayload = (question, room) => {
             step: config.step || 1
         };
     } else {
-        questionData.answers = Array.isArray(question.answers)
-            ? question.answers.length
+        // Choice questions: send the answer texts so participants can read them, but never
+        // the correctness flags. On reconnect `question.answers` no longer carries the text
+        // (it was stripped for scoring), so fall back to the full answers kept in history.
+        const historyEntry = room?.questionHistory?.[room.questionHistory.length - 1];
+        const source = Array.isArray(historyEntry?.answers) ? historyEntry.answers : question.answers;
+        questionData.answers = Array.isArray(source)
+            ? stripAnswerCorrectness(source)
             : question.answers;
     }
 
