@@ -6,6 +6,7 @@ import {socket, addReconnectionCallback, removeReconnectionCallback, clearCurren
 import {FontAwesomeIcon} from "@fortawesome/react-fontawesome";
 import {faCheck, faCheckCircle, faMinus, faPaperPlane, faX, faWifi, faExclamationTriangle, faFire} from "@fortawesome/free-solid-svg-icons";
 import AnswerShape from "@/common/components/AnswerShape";
+import AnswerContent from "@/common/components/AnswerContent";
 import {TrueFalseClient} from "./components/TrueFalseClient";
 import {TextInputClient} from "./components/TextInputClient";
 import {SequenceClient} from "./components/SequenceClient";
@@ -379,6 +380,14 @@ export const InGameClient = () => {
         return score >= 0.9 ? 1 : 0;
     };
 
+    // The server sends the answer texts (without correctness) for choice questions. Older
+    // payloads or cached sessions may still only contain the count, so fall back to placeholders.
+    const getAnswerList = (question) => {
+        if (Array.isArray(question?.answers)) return question.answers;
+        const count = typeof question?.answers === 'number' ? question.answers : 0;
+        return Array.from({length: count}, () => ({content: "", type: "text"}));
+    };
+
     const renderQuestionTypeContent = (question) => {
         switch (question.type) {
             case QUESTION_TYPES.TRUE_FALSE:
@@ -428,9 +437,10 @@ export const InGameClient = () => {
                 }
                 return (
                     <div className="ingame-content grid-layout">
-                        {Array.from({length: question.answers}, (_, index) => (
+                        {getAnswerList(question).map((answer, index) => (
                             <div key={index} className="ingame-answer" onClick={() => submitAnswer([index])}>
-                                <AnswerShape index={index} size="4.5rem"/>
+                                <AnswerShape index={index} size="4.5rem" className="ingame-answer-shape"/>
+                                <AnswerContent answer={answer} index={index} className="ingame-answer"/>
                             </div>
                         ))}
                     </div>
@@ -463,11 +473,12 @@ export const InGameClient = () => {
                 }
                 return (
                     <div className="ingame-content grid-layout">
-                        {Array.from({length: question.answers}, (_, index) => (
-                            <div key={index} 
+                        {getAnswerList(question).map((answer, index) => (
+                            <div key={index}
                                  className={`ingame-answer ${selection[index] ? 'ingame-answer-selected' : ''}`}
                                  onClick={() => handleMultipleChoiceSelection(index)}>
-                                <AnswerShape index={index} size={selection[index] ? "5.5rem" : "4.5rem"}/>
+                                <AnswerShape index={index} size={selection[index] ? "5.5rem" : "4.5rem"} className="ingame-answer-shape"/>
+                                <AnswerContent answer={answer} index={index} className="ingame-answer"/>
                             </div>
                         ))}
                         <div className="submit-container">
